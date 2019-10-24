@@ -74,22 +74,27 @@ func SetLogLevel(logLevel string) {
 
 func Error(format string, v ...interface{}) {
 	Log.Error(format, v...)
+	notifyAppendLog(ErrorLevel, fmt.Sprintf(format, v...))
 }
 
 func Warn(format string, v ...interface{}) {
 	Log.Warn(format, v...)
+	notifyAppendLog(WarnLevel, fmt.Sprintf(format, v...))
 }
 
 func Info(format string, v ...interface{}) {
 	Log.Info(format, v...)
+	notifyAppendLog(InfoLevel, fmt.Sprintf(format, v...))
 }
 
 func Debug(format string, v ...interface{}) {
 	Log.Debug(format, v...)
+	notifyAppendLog(DebugLevel, fmt.Sprintf(format, v...))
 }
 
 func Trace(format string, v ...interface{}) {
 	Log.Trace(format, v...)
+	notifyAppendLog(TraceLevel, fmt.Sprintf(format, v...))
 }
 
 // Logger is the log interface
@@ -142,20 +147,25 @@ func (pl *PrefixLogger) ClearLogPrefix() {
 
 func (pl *PrefixLogger) Error(format string, v ...interface{}) {
 	Log.Error(pl.prefix+format, v...)
+	notifyAppendLog(ErrorLevel, fmt.Sprintf(pl.prefix+format, v...))
 }
 
 func (pl *PrefixLogger) Warn(format string, v ...interface{}) {
 	Log.Warn(pl.prefix+format, v...)
+	notifyAppendLog(WarnLevel, fmt.Sprintf(pl.prefix+format, v...))
 }
 
 func (pl *PrefixLogger) Info(format string, v ...interface{}) {
 	Log.Info(pl.prefix+format, v...)
+	notifyAppendLog(InfoLevel, fmt.Sprintf(pl.prefix+format, v...))
 }
 
 func (pl *PrefixLogger) Debug(format string, v ...interface{}) {
 	Log.Debug(pl.prefix+format, v...)
+	notifyAppendLog(DebugLevel, fmt.Sprintf(pl.prefix+format, v...))
 }
 
 func (pl *PrefixLogger) Trace(format string, v ...interface{}) {
 	Log.Trace(pl.prefix+format, v...)
+	notifyAppendLog(TraceLevel, fmt.Sprintf(pl.prefix+format, v...))
 }
