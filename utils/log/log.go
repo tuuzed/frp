@@ -16,8 +16,8 @@ package log
 
 import (
 	"fmt"
-
 	"github.com/fatedier/beego/logs"
+	"github.com/fatedier/frp/utils/logx"
 )
 
 // Log is the under log object
@@ -74,20 +74,25 @@ func SetLogLevel(logLevel string) {
 
 func Error(format string, v ...interface{}) {
 	Log.Error(format, v...)
+	logx.Log(logx.Error, fmt.Sprintf(format, v...))
 }
 
 func Warn(format string, v ...interface{}) {
 	Log.Warn(format, v...)
+	logx.Log(logx.Warn, fmt.Sprintf(format, v...))
 }
 
 func Info(format string, v ...interface{}) {
 	Log.Info(format, v...)
+	logx.Log(logx.Info, fmt.Sprintf(format, v...))
 }
 
 func Debug(format string, v ...interface{}) {
 	Log.Debug(format, v...)
+	logx.Log(logx.Debug, fmt.Sprintf(format, v...))
 }
 
 func Trace(format string, v ...interface{}) {
 	Log.Trace(format, v...)
+	logx.Log(logx.Trace, fmt.Sprintf(format, v...))
 }

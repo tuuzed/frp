@@ -1,4 +1,4 @@
-package log
+package logx
 
 import (
 	"sync"
@@ -10,11 +10,11 @@ var (
 )
 
 const (
-	TraceLevel = 8
-	DebugLevel = 7
-	InfoLevel  = 6
-	WarnLevel  = 4
-	ErrorLevel = 3
+	Trace = 8
+	Debug = 7
+	Info  = 6
+	Warn  = 4
+	Error = 3
 )
 
 type Appender interface {
@@ -27,7 +27,7 @@ func AddLogAppender(appender Appender) {
 	lock.Unlock()
 }
 
-func notifyAppendLog(level int, msg string) {
+func Log(level int, msg string) {
 	lock.Lock()
 	for _, l := range appenderList {
 		l.Log(level, msg)
