@@ -15,7 +15,9 @@
 package xlog
 
 import (
+	"fmt"
 	"github.com/fatedier/frp/utils/log"
+	"github.com/fatedier/frp/utils/log_extend"
 )
 
 // Logger is not thread safety for operations on prefix
@@ -54,20 +56,25 @@ func (l *Logger) Spawn() *Logger {
 
 func (l *Logger) Error(format string, v ...interface{}) {
 	log.Log.Error(l.prefixString+format, v...)
+	log_extend.Log(log_extend.Error, fmt.Sprintf(l.prefixString+format, v...))
 }
 
 func (l *Logger) Warn(format string, v ...interface{}) {
 	log.Log.Warn(l.prefixString+format, v...)
+	log_extend.Log(log_extend.Warn, fmt.Sprintf(l.prefixString+format, v...))
 }
 
 func (l *Logger) Info(format string, v ...interface{}) {
 	log.Log.Info(l.prefixString+format, v...)
+	log_extend.Log(log_extend.Info, fmt.Sprintf(l.prefixString+format, v...))
 }
 
 func (l *Logger) Debug(format string, v ...interface{}) {
 	log.Log.Debug(l.prefixString+format, v...)
+	log_extend.Log(log_extend.Debug, fmt.Sprintf(l.prefixString+format, v...))
 }
 
 func (l *Logger) Trace(format string, v ...interface{}) {
 	log.Log.Trace(l.prefixString+format, v...)
+	log_extend.Log(log_extend.Trace, fmt.Sprintf(l.prefixString+format, v...))
 }
