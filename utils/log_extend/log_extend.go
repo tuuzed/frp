@@ -1,6 +1,7 @@
 package log_extend
 
 import (
+	"github.com/fatedier/beego/logs"
 	"sync"
 )
 
@@ -10,11 +11,11 @@ var (
 )
 
 const (
-	Trace = 8
-	Debug = 7
-	Info  = 6
-	Warn  = 4
-	Error = 3
+	Trace = logs.LevelTrace
+	Debug = logs.LevelDebug
+	Info  = logs.LevelInfo
+	Warn  = logs.LevelWarn
+	Error = logs.LevelError
 )
 
 type Appender interface {
@@ -23,14 +24,14 @@ type Appender interface {
 
 func AddLogAppender(appender Appender) {
 	lock.Lock()
+	defer lock.Unlock()
 	appenderList = append(appenderList, appender)
-	lock.Unlock()
 }
 
 func Log(level int, msg string) {
 	lock.Lock()
+	defer lock.Unlock()
 	for _, l := range appenderList {
 		l.Log(level, msg)
 	}
-	lock.Unlock()
 }
