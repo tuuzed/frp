@@ -1,4 +1,4 @@
-package log_extend
+package logx
 
 import (
 	"github.com/fatedier/beego/logs"

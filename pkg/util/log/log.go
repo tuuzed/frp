@@ -16,12 +16,11 @@ package log
 
 import (
 	"fmt"
-	"github.com/fatedier/frp/utils/log_extend"
-
 	"github.com/fatedier/beego/logs"
+	"github.com/fatedier/frp/sharefrp/pkg/logx"
 )
 
-// Log is the under log object
+// Log is the under logx object
 var Log *logs.BeeLogger
 
 func init() {
@@ -35,7 +34,7 @@ func InitLog(logWay string, logFile string, logLevel string, maxdays int64, disa
 	SetLogLevel(logLevel)
 }
 
-// SetLogFile to configure log params
+// SetLogFile to configure logx params
 // logWay: file or console
 func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bool) {
 	if logWay == "console" {
@@ -50,7 +49,7 @@ func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bo
 	}
 }
 
-// SetLogLevel set log level, default is warning
+// SetLogLevel set logx level, default is warning
 // value: error, warning, info, debug, trace
 func SetLogLevel(logLevel string) {
 	level := 4 // warning
@@ -71,29 +70,29 @@ func SetLogLevel(logLevel string) {
 	Log.SetLevel(level)
 }
 
-// wrap log
+// wrap logx
 
 func Error(format string, v ...interface{}) {
 	Log.Error(format, v...)
-	log_extend.Log(log_extend.Error, fmt.Sprintf(format, v...))
+	logx.Log(logx.Error, fmt.Sprintf(format, v...))
 }
 
 func Warn(format string, v ...interface{}) {
 	Log.Warn(format, v...)
-	log_extend.Log(log_extend.Warn, fmt.Sprintf(format, v...))
+	logx.Log(logx.Warn, fmt.Sprintf(format, v...))
 }
 
 func Info(format string, v ...interface{}) {
 	Log.Info(format, v...)
-	log_extend.Log(log_extend.Info, fmt.Sprintf(format, v...))
+	logx.Log(logx.Info, fmt.Sprintf(format, v...))
 }
 
 func Debug(format string, v ...interface{}) {
 	Log.Debug(format, v...)
-	log_extend.Log(log_extend.Debug, fmt.Sprintf(format, v...))
+	logx.Log(logx.Debug, fmt.Sprintf(format, v...))
 }
 
 func Trace(format string, v ...interface{}) {
 	Log.Trace(format, v...)
-	log_extend.Log(log_extend.Trace, fmt.Sprintf(format, v...))
+	logx.Log(logx.Trace, fmt.Sprintf(format, v...))
 }
