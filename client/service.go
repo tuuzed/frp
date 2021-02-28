@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/fatedier/frp/client/proxy"
 	"io/ioutil"
 	"net"
 	"runtime"
@@ -298,6 +299,10 @@ func (svr *Service) ReloadConf(pxyCfgs map[string]config.ProxyConf, visitorCfgs 
 	svr.cfgMu.Unlock()
 
 	return svr.ctl.ReloadConf(pxyCfgs, visitorCfgs)
+}
+
+func (svr *Service) GetAllProxyStatus() []*proxy.WorkingStatus {
+	return svr.ctl.pm.GetAllProxyStatus()
 }
 
 func (svr *Service) Close() {
