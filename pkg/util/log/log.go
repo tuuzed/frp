@@ -16,7 +16,7 @@ package log
 
 import (
 	"fmt"
-	"github.com/fatedier/frp/pkg/util/log_extend"
+	"github.com/fatedier/frp/pkg/util/log_sharedfrp"
 
 	"github.com/fatedier/beego/logs"
 )
@@ -75,25 +75,25 @@ func SetLogLevel(logLevel string) {
 
 func Error(format string, v ...interface{}) {
 	Log.Error(format, v...)
-	log_extend.Log(log_extend.Error, fmt.Sprintf(format, v...))
+	log_sharedfrp.Log(log_sharedfrp.Error, fmt.Sprintf(format, v...))
 }
 
 func Warn(format string, v ...interface{}) {
 	Log.Warn(format, v...)
-	log_extend.Log(log_extend.Warn, fmt.Sprintf(format, v...))
+	log_sharedfrp.Log(log_sharedfrp.Warn, fmt.Sprintf(format, v...))
 }
 
 func Info(format string, v ...interface{}) {
 	Log.Info(format, v...)
-	log_extend.Log(log_extend.Info, fmt.Sprintf(format, v...))
+	log_sharedfrp.Log(log_sharedfrp.Info, fmt.Sprintf(format, v...))
 }
 
 func Debug(format string, v ...interface{}) {
 	Log.Debug(format, v...)
-	log_extend.Log(log_extend.Debug, fmt.Sprintf(format, v...))
+	log_sharedfrp.Log(log_sharedfrp.Debug, fmt.Sprintf(format, v...))
 }
 
 func Trace(format string, v ...interface{}) {
 	Log.Trace(format, v...)
-	log_extend.Log(log_extend.Trace, fmt.Sprintf(format, v...))
+	log_sharedfrp.Log(log_sharedfrp.Trace, fmt.Sprintf(format, v...))
 }

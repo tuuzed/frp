@@ -1,4 +1,4 @@
-package log_extend
+package log_sharedfrp
 
 import (
 	"github.com/fatedier/beego/logs"
