@@ -302,7 +302,11 @@ func (svr *Service) ReloadConf(pxyCfgs map[string]config.ProxyConf, visitorCfgs 
 }
 
 func (svr *Service) GetAllProxyStatus() []*proxy.WorkingStatus {
-	return svr.ctl.pm.GetAllProxyStatus()
+	ctl := svr.GetController()
+	if ctl != nil {
+		return ctl.pm.GetAllProxyStatus()
+	}
+	return []*proxy.WorkingStatus{}
 }
 
 func (svr *Service) Close() {
