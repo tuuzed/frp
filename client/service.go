@@ -17,9 +17,7 @@ package client
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
-	"github.com/fatedier/frp/client/proxy"
 	"io/ioutil"
 	"net"
 	"runtime"
@@ -300,16 +298,6 @@ func (svr *Service) ReloadConf(pxyCfgs map[string]config.ProxyConf, visitorCfgs 
 	svr.cfgMu.Unlock()
 
 	return svr.ctl.ReloadConf(pxyCfgs, visitorCfgs)
-}
-
-func (svr *Service) GetAllProxyStatus() (status []*proxy.WorkingStatus, err error) {
-	ctl := svr.GetController()
-	if ctl != nil {
-		status = ctl.pm.GetAllProxyStatus()
-		return
-	}
-	err = errors.New("not login")
-	return
 }
 
 func (svr *Service) Close() {
