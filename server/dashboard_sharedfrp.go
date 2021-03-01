@@ -53,7 +53,7 @@ func (svr *Service) GetProxyStatsByType(proxyType string) (proxyInfos []*ProxySt
 	return svr.getProxyStatsByType(proxyType)
 }
 
-func (svr *Service) GetProxyStatsByTypeAndName(proxyType string, proxyName string) (proxyInfo GetProxyStatsResp, err error) {
+func (svr *Service) GetProxyStatsByTypeAndName(proxyType, proxyName string) (proxyInfo GetProxyStatsResp, err error) {
 	proxyInfo, code, msg := svr.getProxyStatsByTypeAndName(proxyType, proxyName)
 	if code != 200 {
 		err = errors.New(msg)
