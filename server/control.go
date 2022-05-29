@@ -258,7 +258,7 @@ func (ctl *Control) GetWorkConn() (workConn net.Conn, err error) {
 		case workConn, ok = <-ctl.workConnCh:
 			if !ok {
 				err = frpErr.ErrCtlClosed
-				xl.Warn("no work connections avaiable, %v", err)
+				xl.Warn("no work connections available, %v", err)
 				return
 			}
 
@@ -376,6 +376,20 @@ func (ctl *Control) stoper() {
 		pxy.Close()
 		ctl.pxyManager.Del(pxy.GetName())
 		metrics.Server.CloseProxy(pxy.GetName(), pxy.GetConf().GetBaseInfo().ProxyType)
+
+		notifyContent := &plugin.CloseProxyContent{
+			User: plugin.UserInfo{
+				User:  ctl.loginMsg.User,
+				Metas: ctl.loginMsg.Metas,
+				RunID: ctl.loginMsg.RunID,
+			},
+			CloseProxy: msg.CloseProxy{
+				ProxyName: pxy.GetName(),
+			},
+		}
+		go func() {
+			ctl.pluginManager.CloseProxy(notifyContent)
+		}()
 	}
 
 	ctl.allShutdown.Done()
@@ -400,12 +414,19 @@ func (ctl *Control) manager() {
 	defer ctl.allShutdown.Start()
 	defer ctl.managerShutdown.Done()
 
-	heartbeat := time.NewTicker(time.Second)
-	defer heartbeat.Stop()
+	var heartbeatCh <-chan time.Time
+	if ctl.serverCfg.TCPMux || ctl.serverCfg.HeartbeatTimeout <= 0 {
+		// Don't need application heartbeat here.
+		// yamux will do same thing.
+	} else {
+		heartbeat := time.NewTicker(time.Second)
+		defer heartbeat.Stop()
+		heartbeatCh = heartbeat.C
+	}
 
 	for {
 		select {
-		case <-heartbeat.C:
+		case <-heartbeatCh:
 			if time.Since(ctl.lastPing) > time.Duration(ctl.serverCfg.HeartbeatTimeout)*time.Second {
 				xl.Warn("heartbeat timeout")
 				return
@@ -437,11 +458,11 @@ func (ctl *Control) manager() {
 					ProxyName: m.ProxyName,
 				}
 				if err != nil {
-					xl.Warn("new proxy [%s] error: %v", m.ProxyName, err)
+					xl.Warn("new proxy [%s] type [%s] error: %v", m.ProxyName, m.ProxyType, err)
 					resp.Error = util.GenerateResponseErrorString(fmt.Sprintf("new proxy [%s] error", m.ProxyName), err, ctl.serverCfg.DetailedErrorsToClient)
 				} else {
 					resp.RemoteAddr = remoteAddr
-					xl.Info("new proxy [%s] success", m.ProxyName)
+					xl.Info("new proxy [%s] type [%s] success", m.ProxyName, m.ProxyType)
 					metrics.Server.NewProxy(m.ProxyName, m.ProxyType)
 				}
 				ctl.sendCh <- resp
@@ -557,5 +578,20 @@ func (ctl *Control) CloseProxy(closeMsg *msg.CloseProxy) (err error) {
 	ctl.mu.Unlock()
 
 	metrics.Server.CloseProxy(pxy.GetName(), pxy.GetConf().GetBaseInfo().ProxyType)
+
+	notifyContent := &plugin.CloseProxyContent{
+		User: plugin.UserInfo{
+			User:  ctl.loginMsg.User,
+			Metas: ctl.loginMsg.Metas,
+			RunID: ctl.loginMsg.RunID,
+		},
+		CloseProxy: msg.CloseProxy{
+			ProxyName: pxy.GetName(),
+		},
+	}
+	go func() {
+		ctl.pluginManager.CloseProxy(notifyContent)
+	}()
+
 	return
 }

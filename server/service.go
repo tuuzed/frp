@@ -124,18 +124,19 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 	// Create tcpmux httpconnect multiplexer.
 	if cfg.TCPMuxHTTPConnectPort > 0 {
 		var l net.Listener
-		l, err = net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.ProxyBindAddr, cfg.TCPMuxHTTPConnectPort))
+		address := net.JoinHostPort(cfg.ProxyBindAddr, strconv.Itoa(cfg.TCPMuxHTTPConnectPort))
+		l, err = net.Listen("tcp", address)
 		if err != nil {
 			err = fmt.Errorf("Create server listener error, %v", err)
 			return
 		}
 
-		svr.rc.TCPMuxHTTPConnectMuxer, err = tcpmux.NewHTTPConnectTCPMuxer(l, vhostReadWriteTimeout)
+		svr.rc.TCPMuxHTTPConnectMuxer, err = tcpmux.NewHTTPConnectTCPMuxer(l, cfg.TCPMuxPassthrough, vhostReadWriteTimeout)
 		if err != nil {
 			err = fmt.Errorf("Create vhost tcpMuxer error, %v", err)
 			return
 		}
-		log.Info("tcpmux httpconnect multiplexer listen on %s:%d", cfg.ProxyBindAddr, cfg.TCPMuxHTTPConnectPort)
+		log.Info("tcpmux httpconnect multiplexer listen on %s, passthough: %v", address, cfg.TCPMuxPassthrough)
 	}
 
 	// Init all plugins
@@ -185,6 +186,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 	}
 
 	svr.muxer = mux.NewMux(ln)
+	svr.muxer.SetKeepAlive(time.Duration(cfg.TCPKeepAlive) * time.Second)
 	go svr.muxer.Serve()
 	ln = svr.muxer.DefaultListener()
 
@@ -199,7 +201,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 			err = fmt.Errorf("Listen on kcp address udp %s error: %v", address, err)
 			return
 		}
-		log.Info("frps kcp listen on udp %s:%d", cfg.BindAddr, cfg.KCPBindPort)
+		log.Info("frps kcp listen on udp %s", address)
 	}
 
 	// Listen for accepting connections from client using websocket protocol.
@@ -232,7 +234,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 			}
 		}
 		go server.Serve(l)
-		log.Info("http service listen on %s:%d", cfg.ProxyBindAddr, cfg.VhostHTTPPort)
+		log.Info("http service listen on %s", address)
 	}
 
 	// Create https vhost muxer.
@@ -288,7 +290,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 			err = fmt.Errorf("Create dashboard web server error, %v", err)
 			return
 		}
-		log.Info("Dashboard listen on %s:%d", cfg.DashboardAddr, cfg.DashboardPort)
+		log.Info("Dashboard listen on %s", address)
 		statsEnable = true
 	}
 	if statsEnable {
@@ -334,7 +336,8 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn) {
 	case *msg.Login:
 		// server plugin hook
 		content := &plugin.LoginContent{
-			Login: *m,
+			Login:         *m,
+			ClientAddress: conn.RemoteAddr().String(),
 		}
 		retContent, err := svr.pluginManager.Login(content)
 		if err == nil {
@@ -405,7 +408,7 @@ func (svr *Service) HandleListener(l net.Listener) {
 		go func(ctx context.Context, frpConn net.Conn) {
 			if svr.cfg.TCPMux {
 				fmuxCfg := fmux.DefaultConfig()
-				fmuxCfg.KeepAliveInterval = 20 * time.Second
+				fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.TCPMuxKeepaliveInterval) * time.Second
 				fmuxCfg.LogOutput = io.Discard
 				session, err := fmux.Server(frpConn, fmuxCfg)
 				if err != nil {
