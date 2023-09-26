@@ -29,30 +29,29 @@ func init() {
 	Log.SetLogFuncCallDepth(Log.GetLogFuncCallDepth() + 1)
 }
 
-func InitLog(logWay string, logFile string, logLevel string, maxdays int64, disableLogColor bool) {
-	SetLogFile(logWay, logFile, maxdays, disableLogColor)
+func InitLog(logFile string, logLevel string, maxdays int64, disableLogColor bool) {
+	SetLogFile(logFile, maxdays, disableLogColor)
 	SetLogLevel(logLevel)
 }
 
 // SetLogFile to configure log params
-// logWay: file or console
-func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bool) {
-	if logWay == "console" {
+func SetLogFile(logFile string, maxdays int64, disableLogColor bool) {
+	if logFile == "console" {
 		params := ""
 		if disableLogColor {
-			params = fmt.Sprintf(`{"color": false}`)
+			params = `{"color": false}`
 		}
-		Log.SetLogger("console", params)
+		_ = Log.SetLogger("console", params)
 	} else {
 		params := fmt.Sprintf(`{"filename": "%s", "maxdays": %d}`, logFile, maxdays)
-		Log.SetLogger("file", params)
+		_ = Log.SetLogger("file", params)
 	}
 }
 
 // SetLogLevel set log level, default is warning
 // value: error, warning, info, debug, trace
 func SetLogLevel(logLevel string) {
-	level := 4 // warning
+	var level int
 	switch logLevel {
 	case "error":
 		level = 3
@@ -65,7 +64,7 @@ func SetLogLevel(logLevel string) {
 	case "trace":
 		level = 8
 	default:
-		level = 4
+		level = 4 // warning
 	}
 	Log.SetLevel(level)
 }

@@ -21,11 +21,11 @@ import (
 	"net/http/pprof"
 	"time"
 
-	"github.com/fatedier/frp/assets"
-	frpNet "github.com/fatedier/frp/pkg/util/net"
-
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/fatedier/frp/assets"
+	utilnet "github.com/fatedier/frp/pkg/util/net"
 )
 
 var (
@@ -39,7 +39,7 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 	router.HandleFunc("/healthz", svr.Healthz)
 
 	// debug
-	if svr.cfg.PprofEnable {
+	if svr.cfg.WebServer.PprofEnable {
 		router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		router.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
@@ -49,8 +49,8 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 
 	subRouter := router.NewRoute().Subrouter()
 
-	user, passwd := svr.cfg.DashboardUser, svr.cfg.DashboardPwd
-	subRouter.Use(frpNet.NewHTTPAuthMiddleware(user, passwd).Middleware)
+	user, passwd := svr.cfg.WebServer.User, svr.cfg.WebServer.Password
+	subRouter.Use(utilnet.NewHTTPAuthMiddleware(user, passwd).SetAuthFailDelay(200 * time.Millisecond).Middleware)
 
 	// metrics
 	if svr.cfg.EnablePrometheus {
@@ -65,7 +65,7 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 
 	// view
 	subRouter.Handle("/favicon.ico", http.FileServer(assets.FileSystem)).Methods("GET")
-	subRouter.PathPrefix("/static/").Handler(frpNet.MakeHTTPGzipHandler(http.StripPrefix("/static/", http.FileServer(assets.FileSystem)))).Methods("GET")
+	subRouter.PathPrefix("/static/").Handler(utilnet.MakeHTTPGzipHandler(http.StripPrefix("/static/", http.FileServer(assets.FileSystem)))).Methods("GET")
 
 	subRouter.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/static/", http.StatusMovedPermanently)
@@ -82,8 +82,8 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 		return err
 	}
 
-	if svr.cfg.DashboardTLSMode {
-		cert, err := tls.LoadX509KeyPair(svr.cfg.DashboardTLSCertFile, svr.cfg.DashboardTLSKeyFile)
+	if svr.cfg.WebServer.TLS != nil {
+		cert, err := tls.LoadX509KeyPair(svr.cfg.WebServer.TLS.CertFile, svr.cfg.WebServer.TLS.KeyFile)
 		if err != nil {
 			return err
 		}
@@ -92,6 +92,8 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 		}
 		ln = tls.NewListener(ln, tlsCfg)
 	}
-	go server.Serve(ln)
+	go func() {
+		_ = server.Serve(ln)
+	}()
 	return
 }

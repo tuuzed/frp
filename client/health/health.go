@@ -21,14 +21,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/util/xlog"
 )
 
-var (
-	ErrHealthCheckType = errors.New("error health check type")
-)
+var ErrHealthCheckType = errors.New("error health check type")
 
 type Monitor struct {
 	checkType      string
@@ -51,26 +51,33 @@ type Monitor struct {
 	cancel context.CancelFunc
 }
 
-func NewMonitor(ctx context.Context, checkType string,
-	intervalS int, timeoutS int, maxFailedTimes int,
-	addr string, url string,
-	statusNormalFn func(), statusFailedFn func()) *Monitor {
-
-	if intervalS <= 0 {
-		intervalS = 10
+func NewMonitor(ctx context.Context, cfg v1.HealthCheckConfig, addr string,
+	statusNormalFn func(), statusFailedFn func(),
+) *Monitor {
+	if cfg.IntervalSeconds <= 0 {
+		cfg.IntervalSeconds = 10
 	}
-	if timeoutS <= 0 {
-		timeoutS = 3
+	if cfg.TimeoutSeconds <= 0 {
+		cfg.TimeoutSeconds = 3
 	}
-	if maxFailedTimes <= 0 {
-		maxFailedTimes = 1
+	if cfg.MaxFailed <= 0 {
+		cfg.MaxFailed = 1
 	}
 	newctx, cancel := context.WithCancel(ctx)
+
+	var url string
+	if cfg.Type == "http" && cfg.Path != "" {
+		s := "http://" + addr
+		if !strings.HasPrefix(cfg.Path, "/") {
+			s += "/"
+		}
+		url = s + cfg.Path
+	}
 	return &Monitor{
-		checkType:      checkType,
-		interval:       time.Duration(intervalS) * time.Second,
-		timeout:        time.Duration(timeoutS) * time.Second,
-		maxFailedTimes: maxFailedTimes,
+		checkType:      cfg.Type,
+		interval:       time.Duration(cfg.IntervalSeconds) * time.Second,
+		timeout:        time.Duration(cfg.TimeoutSeconds) * time.Second,
+		maxFailedTimes: cfg.MaxFailed,
 		addr:           addr,
 		url:            url,
 		statusOK:       false,
@@ -152,7 +159,7 @@ func (monitor *Monitor) doTCPCheck(ctx context.Context) error {
 }
 
 func (monitor *Monitor) doHTTPCheck(ctx context.Context) error {
-	req, err := http.NewRequest("GET", monitor.url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", monitor.url, nil)
 	if err != nil {
 		return err
 	}
@@ -161,7 +168,7 @@ func (monitor *Monitor) doHTTPCheck(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("do http health check, StatusCode is [%d] not 2xx", resp.StatusCode)

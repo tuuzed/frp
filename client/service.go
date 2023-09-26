@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"runtime"
 	"strconv"
@@ -28,25 +27,26 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fatedier/golib/crypto"
+	libdial "github.com/fatedier/golib/net/dial"
+	fmux "github.com/hashicorp/yamux"
+	quic "github.com/quic-go/quic-go"
+	"github.com/samber/lo"
+
 	"github.com/fatedier/frp/assets"
 	"github.com/fatedier/frp/pkg/auth"
-	"github.com/fatedier/frp/pkg/config"
+	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/transport"
 	"github.com/fatedier/frp/pkg/util/log"
-	frpNet "github.com/fatedier/frp/pkg/util/net"
+	utilnet "github.com/fatedier/frp/pkg/util/net"
 	"github.com/fatedier/frp/pkg/util/util"
 	"github.com/fatedier/frp/pkg/util/version"
 	"github.com/fatedier/frp/pkg/util/xlog"
-	"github.com/fatedier/golib/crypto"
-	libdial "github.com/fatedier/golib/net/dial"
-
-	fmux "github.com/hashicorp/yamux"
 )
 
 func init() {
 	crypto.DefaultSalt = "frp"
-	rand.Seed(time.Now().UnixNano())
 }
 
 // Service is a client service.
@@ -61,17 +61,14 @@ type Service struct {
 	// Sets authentication based on selected method
 	authSetter auth.Setter
 
-	cfg         config.ClientCommonConf
-	pxyCfgs     map[string]config.ProxyConf
-	visitorCfgs map[string]config.VisitorConf
+	cfg         *v1.ClientCommonConfig
+	pxyCfgs     []v1.ProxyConfigurer
+	visitorCfgs []v1.VisitorConfigurer
 	cfgMu       sync.RWMutex
 
 	// The configuration file used to initialize this client, or an empty
 	// string if no configuration file was used.
 	cfgFile string
-
-	// This is configured by the login response from frps
-	serverUDPPort int
 
 	exit uint32 // 0 means not exit
 
@@ -81,18 +78,20 @@ type Service struct {
 	cancel context.CancelFunc
 }
 
-func NewService(cfg config.ClientCommonConf, pxyCfgs map[string]config.ProxyConf, visitorCfgs map[string]config.VisitorConf, cfgFile string) (svr *Service, err error) {
-
-	ctx, cancel := context.WithCancel(context.Background())
+func NewService(
+	cfg *v1.ClientCommonConfig,
+	pxyCfgs []v1.ProxyConfigurer,
+	visitorCfgs []v1.VisitorConfigurer,
+	cfgFile string,
+) (svr *Service, err error) {
 	svr = &Service{
-		authSetter:  auth.NewAuthSetter(cfg.ClientConfig),
+		authSetter:  auth.NewAuthSetter(cfg.Auth),
 		cfg:         cfg,
 		cfgFile:     cfgFile,
 		pxyCfgs:     pxyCfgs,
 		visitorCfgs: visitorCfgs,
+		ctx:         context.Background(),
 		exit:        0,
-		ctx:         xlog.NewContext(ctx, xlog.New()),
-		cancel:      cancel,
 	}
 	return
 }
@@ -103,14 +102,18 @@ func (svr *Service) GetController() *Control {
 	return svr.ctl
 }
 
-func (svr *Service) Run() error {
+func (svr *Service) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	svr.ctx = xlog.NewContext(ctx, xlog.New())
+	svr.cancel = cancel
+
 	xl := xlog.FromContextSafe(svr.ctx)
 
 	// set custom DNSServer
 	if svr.cfg.DNSServer != "" {
 		dnsAddr := svr.cfg.DNSServer
-		if !strings.Contains(dnsAddr, ":") {
-			dnsAddr += ":53"
+		if _, _, err := net.SplitHostPort(dnsAddr); err != nil {
+			dnsAddr = net.JoinHostPort(dnsAddr, "53")
 		}
 		// Change default dns server for frpc
 		net.DefaultResolver = &net.Resolver{
@@ -123,19 +126,19 @@ func (svr *Service) Run() error {
 
 	// login to frps
 	for {
-		conn, session, err := svr.login()
+		conn, cm, err := svr.login()
 		if err != nil {
 			xl.Warn("login to server failed: %v", err)
 
 			// if login_fail_exit is true, just exit this program
 			// otherwise sleep a while and try again to connect to server
-			if svr.cfg.LoginFailExit {
+			if lo.FromPtr(svr.cfg.LoginFailExit) {
 				return err
 			}
-			util.RandomSleep(10*time.Second, 0.9, 1.1)
+			util.RandomSleep(5*time.Second, 0.9, 1.1)
 		} else {
 			// login success
-			ctl := NewControl(svr.ctx, svr.runID, conn, session, svr.cfg, svr.pxyCfgs, svr.visitorCfgs, svr.serverUDPPort, svr.authSetter)
+			ctl := NewControl(svr.ctx, svr.runID, conn, cm, svr.cfg, svr.pxyCfgs, svr.visitorCfgs, svr.authSetter)
 			ctl.Run()
 			svr.ctlMu.Lock()
 			svr.ctl = ctl
@@ -146,18 +149,22 @@ func (svr *Service) Run() error {
 
 	go svr.keepControllerWorking()
 
-	if svr.cfg.AdminPort != 0 {
+	if svr.cfg.WebServer.Port != 0 {
 		// Init admin server assets
-		assets.Load(svr.cfg.AssetsDir)
+		assets.Load(svr.cfg.WebServer.AssetsDir)
 
-		address := net.JoinHostPort(svr.cfg.AdminAddr, strconv.Itoa(svr.cfg.AdminPort))
+		address := net.JoinHostPort(svr.cfg.WebServer.Addr, strconv.Itoa(svr.cfg.WebServer.Port))
 		err := svr.RunAdminServer(address)
 		if err != nil {
 			log.Warn("run admin server error: %v", err)
 		}
-		log.Info("admin server listen on %s:%d", svr.cfg.AdminAddr, svr.cfg.AdminPort)
+		log.Info("admin server listen on %s:%d", svr.cfg.WebServer.Addr, svr.cfg.WebServer.Port)
 	}
 	<-svr.ctx.Done()
+	// service context may not be canceled by svr.Close(), we should call it here to release resources
+	if atomic.LoadUint32(&svr.exit) == 0 {
+		svr.Close()
+	}
 	return nil
 }
 
@@ -179,7 +186,7 @@ func (svr *Service) keepControllerWorking() {
 			return
 		}
 
-		// the first three retry with no delay
+		// the first three attempts with a low delay
 		if reconnectCounts > 3 {
 			util.RandomSleep(reconnectDelay, 0.9, 1.1)
 			xl.Info("wait %v to reconnect", reconnectDelay)
@@ -198,13 +205,17 @@ func (svr *Service) keepControllerWorking() {
 		}
 
 		for {
+			if atomic.LoadUint32(&svr.exit) != 0 {
+				return
+			}
+
 			xl.Info("try to reconnect to server...")
-			conn, session, err := svr.login()
+			conn, cm, err := svr.login()
 			if err != nil {
 				xl.Warn("reconnect to server error: %v, wait %v for another retry", err, delayTime)
 				util.RandomSleep(delayTime, 0.9, 1.1)
 
-				delayTime = delayTime * 2
+				delayTime *= 2
 				if delayTime > maxDelayTime {
 					delayTime = maxDelayTime
 				}
@@ -213,7 +224,7 @@ func (svr *Service) keepControllerWorking() {
 			// reconnect success, init delayTime
 			delayTime = time.Second
 
-			ctl := NewControl(svr.ctx, svr.runID, conn, session, svr.cfg, svr.pxyCfgs, svr.visitorCfgs, svr.serverUDPPort, svr.authSetter)
+			ctl := NewControl(svr.ctx, svr.runID, conn, cm, svr.cfg, svr.pxyCfgs, svr.visitorCfgs, svr.authSetter)
 			ctl.Run()
 			svr.ctlMu.Lock()
 			if svr.ctl != nil {
@@ -229,94 +240,34 @@ func (svr *Service) keepControllerWorking() {
 // login creates a connection to frps and registers it self as a client
 // conn: control connection
 // session: if it's not nil, using tcp mux
-func (svr *Service) login() (conn net.Conn, session *fmux.Session, err error) {
+func (svr *Service) login() (conn net.Conn, cm *ConnectionManager, err error) {
 	xl := xlog.FromContextSafe(svr.ctx)
-	var tlsConfig *tls.Config
-	if svr.cfg.TLSEnable {
-		sn := svr.cfg.TLSServerName
-		if sn == "" {
-			sn = svr.cfg.ServerAddr
-		}
+	cm = NewConnectionManager(svr.ctx, svr.cfg)
 
-		tlsConfig, err = transport.NewClientTLSConfig(
-			svr.cfg.TLSCertFile,
-			svr.cfg.TLSKeyFile,
-			svr.cfg.TLSTrustedCaFile,
-			sn)
-		if err != nil {
-			xl.Warn("fail to build tls configuration when service login, err: %v", err)
-			return
-		}
-	}
-
-	proxyType, addr, auth, err := libdial.ParseProxyURL(svr.cfg.HTTPProxy)
-	if err != nil {
-		xl.Error("fail to parse proxy url")
-		return
-	}
-	dialOptions := []libdial.DialOption{}
-	protocol := svr.cfg.Protocol
-	if protocol == "websocket" {
-		protocol = "tcp"
-		dialOptions = append(dialOptions, libdial.WithAfterHook(libdial.AfterHook{Hook: frpNet.DialHookWebsocket()}))
-	}
-	if svr.cfg.ConnectServerLocalIP != "" {
-		dialOptions = append(dialOptions, libdial.WithLocalAddr(svr.cfg.ConnectServerLocalIP))
-	}
-	dialOptions = append(dialOptions,
-		libdial.WithProtocol(protocol),
-		libdial.WithTimeout(time.Duration(svr.cfg.DialServerTimeout)*time.Second),
-		libdial.WithKeepAlive(time.Duration(svr.cfg.DialServerKeepAlive)*time.Second),
-		libdial.WithProxy(proxyType, addr),
-		libdial.WithProxyAuth(auth),
-		libdial.WithTLSConfig(tlsConfig),
-		libdial.WithAfterHook(libdial.AfterHook{
-			Hook: frpNet.DialHookCustomTLSHeadByte(tlsConfig != nil, svr.cfg.DisableCustomTLSFirstByte),
-		}),
-	)
-	conn, err = libdial.Dial(
-		net.JoinHostPort(svr.cfg.ServerAddr, strconv.Itoa(svr.cfg.ServerPort)),
-		dialOptions...,
-	)
-	if err != nil {
-		return
+	if err = cm.OpenConnection(); err != nil {
+		return nil, nil, err
 	}
 
 	defer func() {
 		if err != nil {
-			conn.Close()
-			if session != nil {
-				session.Close()
-			}
+			cm.Close()
 		}
 	}()
 
-	if svr.cfg.TCPMux {
-		fmuxCfg := fmux.DefaultConfig()
-		fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.TCPMuxKeepaliveInterval) * time.Second
-		fmuxCfg.LogOutput = io.Discard
-		session, err = fmux.Client(conn, fmuxCfg)
-		if err != nil {
-			return
-		}
-		stream, errRet := session.OpenStream()
-		if errRet != nil {
-			session.Close()
-			err = errRet
-			return
-		}
-		conn = stream
+	conn, err = cm.Connect()
+	if err != nil {
+		return
 	}
 
 	loginMsg := &msg.Login{
 		Arch:      runtime.GOARCH,
 		Os:        runtime.GOOS,
-		PoolCount: svr.cfg.PoolCount,
+		PoolCount: svr.cfg.Transport.PoolCount,
 		User:      svr.cfg.User,
 		Version:   version.Full(),
 		Timestamp: time.Now().Unix(),
 		RunID:     svr.runID,
-		Metas:     svr.cfg.Metas,
+		Metas:     svr.cfg.Metadatas,
 	}
 
 	// Add auth
@@ -329,11 +280,11 @@ func (svr *Service) login() (conn net.Conn, session *fmux.Session, err error) {
 	}
 
 	var loginRespMsg msg.LoginResp
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	if err = msg.ReadMsgInto(conn, &loginRespMsg); err != nil {
 		return
 	}
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 
 	if loginRespMsg.Error != "" {
 		err = fmt.Errorf("%s", loginRespMsg.Error)
@@ -345,12 +296,11 @@ func (svr *Service) login() (conn net.Conn, session *fmux.Session, err error) {
 	xl.ResetPrefixes()
 	xl.AppendPrefix(svr.runID)
 
-	svr.serverUDPPort = loginRespMsg.ServerUDPPort
-	xl.Info("login to server success, get run id [%s], server udp port [%d]", loginRespMsg.RunID, loginRespMsg.ServerUDPPort)
+	xl.Info("login to server success, get run id [%s]", loginRespMsg.RunID)
 	return
 }
 
-func (svr *Service) ReloadConf(pxyCfgs map[string]config.ProxyConf, visitorCfgs map[string]config.VisitorConf) error {
+func (svr *Service) ReloadConf(pxyCfgs []v1.ProxyConfigurer, visitorCfgs []v1.VisitorConfigurer) error {
 	svr.cfgMu.Lock()
 	svr.pxyCfgs = pxyCfgs
 	svr.visitorCfgs = visitorCfgs
@@ -376,8 +326,183 @@ func (svr *Service) GracefulClose(d time.Duration) {
 	svr.ctlMu.RLock()
 	if svr.ctl != nil {
 		svr.ctl.GracefulClose(d)
+		svr.ctl = nil
 	}
 	svr.ctlMu.RUnlock()
 
-	svr.cancel()
+	if svr.cancel != nil {
+		svr.cancel()
+	}
+}
+
+type ConnectionManager struct {
+	ctx context.Context
+	cfg *v1.ClientCommonConfig
+
+	muxSession *fmux.Session
+	quicConn   quic.Connection
+}
+
+func NewConnectionManager(ctx context.Context, cfg *v1.ClientCommonConfig) *ConnectionManager {
+	return &ConnectionManager{
+		ctx: ctx,
+		cfg: cfg,
+	}
+}
+
+func (cm *ConnectionManager) OpenConnection() error {
+	xl := xlog.FromContextSafe(cm.ctx)
+
+	// special for quic
+	if strings.EqualFold(cm.cfg.Transport.Protocol, "quic") {
+		var tlsConfig *tls.Config
+		var err error
+		sn := cm.cfg.Transport.TLS.ServerName
+		if sn == "" {
+			sn = cm.cfg.ServerAddr
+		}
+		if lo.FromPtr(cm.cfg.Transport.TLS.Enable) {
+			tlsConfig, err = transport.NewClientTLSConfig(
+				cm.cfg.Transport.TLS.CertFile,
+				cm.cfg.Transport.TLS.KeyFile,
+				cm.cfg.Transport.TLS.TrustedCaFile,
+				sn)
+		} else {
+			tlsConfig, err = transport.NewClientTLSConfig("", "", "", sn)
+		}
+		if err != nil {
+			xl.Warn("fail to build tls configuration, err: %v", err)
+			return err
+		}
+		tlsConfig.NextProtos = []string{"frp"}
+
+		conn, err := quic.DialAddr(
+			cm.ctx,
+			net.JoinHostPort(cm.cfg.ServerAddr, strconv.Itoa(cm.cfg.ServerPort)),
+			tlsConfig, &quic.Config{
+				MaxIdleTimeout:     time.Duration(cm.cfg.Transport.QUIC.MaxIdleTimeout) * time.Second,
+				MaxIncomingStreams: int64(cm.cfg.Transport.QUIC.MaxIncomingStreams),
+				KeepAlivePeriod:    time.Duration(cm.cfg.Transport.QUIC.KeepalivePeriod) * time.Second,
+			})
+		if err != nil {
+			return err
+		}
+		cm.quicConn = conn
+		return nil
+	}
+
+	if !lo.FromPtr(cm.cfg.Transport.TCPMux) {
+		return nil
+	}
+
+	conn, err := cm.realConnect()
+	if err != nil {
+		return err
+	}
+
+	fmuxCfg := fmux.DefaultConfig()
+	fmuxCfg.KeepAliveInterval = time.Duration(cm.cfg.Transport.TCPMuxKeepaliveInterval) * time.Second
+	fmuxCfg.LogOutput = io.Discard
+	fmuxCfg.MaxStreamWindowSize = 6 * 1024 * 1024
+	session, err := fmux.Client(conn, fmuxCfg)
+	if err != nil {
+		return err
+	}
+	cm.muxSession = session
+	return nil
+}
+
+func (cm *ConnectionManager) Connect() (net.Conn, error) {
+	if cm.quicConn != nil {
+		stream, err := cm.quicConn.OpenStreamSync(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return utilnet.QuicStreamToNetConn(stream, cm.quicConn), nil
+	} else if cm.muxSession != nil {
+		stream, err := cm.muxSession.OpenStream()
+		if err != nil {
+			return nil, err
+		}
+		return stream, nil
+	}
+
+	return cm.realConnect()
+}
+
+func (cm *ConnectionManager) realConnect() (net.Conn, error) {
+	xl := xlog.FromContextSafe(cm.ctx)
+	var tlsConfig *tls.Config
+	var err error
+	tlsEnable := lo.FromPtr(cm.cfg.Transport.TLS.Enable)
+	if cm.cfg.Transport.Protocol == "wss" {
+		tlsEnable = true
+	}
+	if tlsEnable {
+		sn := cm.cfg.Transport.TLS.ServerName
+		if sn == "" {
+			sn = cm.cfg.ServerAddr
+		}
+
+		tlsConfig, err = transport.NewClientTLSConfig(
+			cm.cfg.Transport.TLS.CertFile,
+			cm.cfg.Transport.TLS.KeyFile,
+			cm.cfg.Transport.TLS.TrustedCaFile,
+			sn)
+		if err != nil {
+			xl.Warn("fail to build tls configuration, err: %v", err)
+			return nil, err
+		}
+	}
+
+	proxyType, addr, auth, err := libdial.ParseProxyURL(cm.cfg.Transport.ProxyURL)
+	if err != nil {
+		xl.Error("fail to parse proxy url")
+		return nil, err
+	}
+	dialOptions := []libdial.DialOption{}
+	protocol := cm.cfg.Transport.Protocol
+	switch protocol {
+	case "websocket":
+		protocol = "tcp"
+		dialOptions = append(dialOptions, libdial.WithAfterHook(libdial.AfterHook{Hook: utilnet.DialHookWebsocket(protocol, "")}))
+		dialOptions = append(dialOptions, libdial.WithAfterHook(libdial.AfterHook{
+			Hook: utilnet.DialHookCustomTLSHeadByte(tlsConfig != nil, lo.FromPtr(cm.cfg.Transport.TLS.DisableCustomTLSFirstByte)),
+		}))
+		dialOptions = append(dialOptions, libdial.WithTLSConfig(tlsConfig))
+	case "wss":
+		protocol = "tcp"
+		dialOptions = append(dialOptions, libdial.WithTLSConfigAndPriority(100, tlsConfig))
+		// Make sure that if it is wss, the websocket hook is executed after the tls hook.
+		dialOptions = append(dialOptions, libdial.WithAfterHook(libdial.AfterHook{Hook: utilnet.DialHookWebsocket(protocol, tlsConfig.ServerName), Priority: 110}))
+	default:
+		dialOptions = append(dialOptions, libdial.WithTLSConfig(tlsConfig))
+	}
+
+	if cm.cfg.Transport.ConnectServerLocalIP != "" {
+		dialOptions = append(dialOptions, libdial.WithLocalAddr(cm.cfg.Transport.ConnectServerLocalIP))
+	}
+	dialOptions = append(dialOptions,
+		libdial.WithProtocol(protocol),
+		libdial.WithTimeout(time.Duration(cm.cfg.Transport.DialServerTimeout)*time.Second),
+		libdial.WithKeepAlive(time.Duration(cm.cfg.Transport.DialServerKeepAlive)*time.Second),
+		libdial.WithProxy(proxyType, addr),
+		libdial.WithProxyAuth(auth),
+	)
+	conn, err := libdial.DialContext(
+		cm.ctx,
+		net.JoinHostPort(cm.cfg.ServerAddr, strconv.Itoa(cm.cfg.ServerPort)),
+		dialOptions...,
+	)
+	return conn, err
+}
+
+func (cm *ConnectionManager) Close() error {
+	if cm.quicConn != nil {
+		_ = cm.quicConn.CloseWithError(0, "")
+	}
+	if cm.muxSession != nil {
+		_ = cm.muxSession.Close()
+	}
+	return nil
 }
